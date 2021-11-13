@@ -1,103 +1,102 @@
 use std::cell;
-use std::error;
-use std::fmt;
 use std::io;
+use std::io::Read;
 use std::str;
+
+use crate::archive::ArchiveError;
 
 const HEADER_SIZE: usize = 110;
 const MAGIC_NUMBER: &[u8] = b"070701";
 const TRAILER: &str = "TRAILER!!!";
 
+/// A wrapper around io::Read which counts the number of bytes read.
 #[derive(Debug)]
-struct CpioFile<'a, R: io::Read> {
+struct PosReader<R: io::Read> {
+    pub count: usize,
+    inner: R,
+}
+
+impl<R: io::Read> io::Read for PosReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        println!("reading pos: {}", self.count);
+        let count = self.inner.read(buf)?;
+        self.count += count;
+        Ok(count)
+    }
+}
+
+#[derive(Debug)]
+pub struct CpioFile<'a, R: io::Read> {
     filesize: u32,
     remaining: usize,
     filename: String,
-    reader: &'a cell::RefCell<R>
+    reader: &'a cell::RefCell<PosReader<R>>,
 }
 
 impl<'a, R: io::Read> io::Read for CpioFile<'a, R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let mut reader = self.reader.borrow_mut();
+
+        println!("remaining: {}", self.remaining);
+        // maximum to read is the end of the contained file
         let max_read = usize::min(buf.len(), self.remaining);
         let bytes_read = reader.read(&mut buf[0..max_read])?;
         self.remaining -= bytes_read;
-
-        if self.remaining == 0 {
-            // data is rounded up to the next 4-byte boundary
-            let trailing = 4 - (self.filesize % 4);
-            let mut trailing_buf = [0u8; 4];
-            reader
-                .read_exact(&mut trailing_buf[0..trailing as usize])?;
-        }
+        println!("returning: {}", bytes_read);
 
         Ok(bytes_read)
     }
 }
 
-#[derive(Debug)]
-pub enum CpioError {
-    /// Represents a mis-formatted input file, or failure to parse an element within the file.
-    FormatError(String),
-    /// Represents an error while reading from the input stream.
-    IOError(io::Error),
-}
-
-impl fmt::Display for CpioError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            CpioError::FormatError(str) => write!(f, "format error: {}", str),
-            CpioError::IOError(_) => write!(f, "io error"),
-        }
-    }
-}
-
-impl error::Error for CpioError {
-    fn source(&self) -> Option<&(dyn error::Error + 'static)> {
-        match self {
-            CpioError::FormatError(_) => None,
-            CpioError::IOError(ref source) => Some(source),
-        }
-    }
-}
-
 pub struct CpioReader<R: io::Read> {
-    reader: cell::RefCell<R>,
+    reader: cell::RefCell<PosReader<R>>,
 }
 
 impl<'a, R: io::Read> CpioReader<R> {
     pub fn new(reader: R) -> CpioReader<R> {
         CpioReader {
-            reader: cell::RefCell::new(reader),
+            reader: cell::RefCell::new(PosReader {
+                count: 0,
+                inner: reader,
+            }),
         }
     }
 
-    fn read_hex_u32(reader: &mut cell::RefMut<R>) -> Result<u32, CpioError> {
+    fn read_hex_u32(reader: &mut cell::RefMut<PosReader<R>>) -> Result<u32, ArchiveError> {
         let mut buf = [0u8; 8];
         if let Err(err) = reader.read_exact(&mut buf) {
-            return Err(CpioError::IOError(err));
+            return Err(ArchiveError::IOError { source: err });
         }
-        // TODO: wrap inner errors in cpioerror
-        let hexstr = str::from_utf8(&buf)
-            .map_err(|_| CpioError::FormatError(String::from("hexstr read error")))?;
+        let hexstr = str::from_utf8(&buf).map_err(|err| ArchiveError::ParseError(Box::new(err)))?;
         let val = u32::from_str_radix(hexstr, 16)
-            .map_err(|_| CpioError::FormatError(String::from("hex parse error")))?;
+            .map_err(|err| ArchiveError::ParseError(Box::new(err)))?;
         Ok(val)
     }
 
-    fn read_next_file(&'a self) -> Result<Option<CpioFile<'a, R>>, CpioError> {
+    pub fn read_next_file(&'a self) -> Result<Option<CpioFile<'a, R>>, ArchiveError> {
+        // TODO: the previous file needs to be completely read before we get here or we'll fail
+        //  this should be checked as an invariant
         let mut reader = self.reader.borrow_mut();
+
+        if reader.count > 0 {
+            let trailing = 4 - (reader.count % 4);
+            println!("reading {} more bytes", trailing);
+            let mut trailing_buf = [0u8; 4];
+            reader.read_exact(&mut trailing_buf[0..trailing as usize])?;
+        }
+
         let mut buf = [0u8; 256];
         {
             let mut buf = &mut buf[0..MAGIC_NUMBER.len()];
-            if let Err(err) = reader.read_exact(&mut buf) {
-                return Err(CpioError::IOError(err));
+            if let Err(err) = io::Read::read_exact(&mut *reader, &mut buf) {
+                return Err(ArchiveError::IOError { source: err });
             }
+            println!("magic: {}", str::from_utf8(&buf[..buf.len()]).unwrap());
             if buf != MAGIC_NUMBER {
-                // TODO: need an error message on here
-                return Err(CpioError::FormatError(String::from(
-                    "magic number mismatch",
-                )));
+                return Err(ArchiveError::FormatError {
+                    offset: reader.count,
+                    reason: "magic number mismatch".to_owned(),
+                });
             }
         }
 
@@ -116,34 +115,38 @@ impl<'a, R: io::Read> CpioReader<R> {
         let check = Self::read_hex_u32(&mut reader)?;
 
         if check != 0 {
-            return Err(CpioError::FormatError(String::from(
-                "check field was non-zero",
-            )));
+            return Err(ArchiveError::FormatError {
+                offset: reader.count,
+                reason: "check field non-zero".to_owned(),
+            });
         }
 
         // this isn't a hard limit on cpio format, but we really shouldn't need filenames longer
         // than this.
         if namesize as usize > buf.len() {
-            return Err(CpioError::FormatError(String::from(
-                "unexpectedly long filename",
-            )));
+            return Err(ArchiveError::FormatError {
+                offset: reader.count,
+                reason: format!("unexpectedly long filename size: {}", namesize).to_owned(),
+            });
         }
 
         let mut buf = &mut buf[0..namesize as usize];
         if let Err(err) = reader.read_exact(&mut buf) {
-            return Err(CpioError::IOError(err));
+            return Err(ArchiveError::IOError { source: err });
         }
-        let filename = str::from_utf8(&buf[..(buf.len()-1)])
-            .map_err(|_| CpioError::FormatError(String::from("failed to read filename")))?;
+        let filename = str::from_utf8(&buf[..(buf.len() - 1)])
+            .map_err(|err| ArchiveError::ParseError(Box::new(err)))?;
+        println!("filename: {}", filename);
 
         // the size of the header is rounded up to the next 4-byte boundary
         {
             let bytes_read = HEADER_SIZE + namesize as usize;
             let mut trailing_buf = [0u8; 4];
-            let trailing = 4 - (bytes_read % 4);
+            let trailing = (4 - (bytes_read % 4)) % 4;
+            println!("trailing: {}", trailing);
             reader
                 .read_exact(&mut trailing_buf[0..trailing])
-                .map_err(|err| CpioError::IOError(err))?;
+                .map_err(|err| ArchiveError::IOError { source: err })?;
         }
 
         if filename == TRAILER {
@@ -178,11 +181,7 @@ mod test {
         let mut file = fs::File::open(path).unwrap();
         let reader = CpioReader::new(&mut file);
         let err = reader.read_next_file().unwrap_err();
-        //assert!(matches!(err, CpioError::IOError {..}));
-        match err {
-            CpioError::IOError(inner) => println!("Error while reading: {}", inner),
-            _ => panic!(),
-        }
+        assert!(matches!(err, ArchiveError::IOError { .. }));
     }
 
     #[test]
@@ -191,7 +190,7 @@ mod test {
         path.push("test/cpio/two-files.cpio");
 
         let file = fs::File::open(path).unwrap();
-        let reader = CpioReader::new( file);
+        let reader = CpioReader::new(file);
 
         let mut nfile = 0;
         loop {
