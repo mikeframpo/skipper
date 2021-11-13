@@ -3,6 +3,8 @@ use std::io;
 use std::io::Read;
 use std::str;
 
+use log::debug;
+
 use crate::archive::ArchiveError;
 
 const HEADER_SIZE: usize = 110;
@@ -18,7 +20,7 @@ struct PosReader<R: io::Read> {
 
 impl<R: io::Read> io::Read for PosReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        println!("reading pos: {}", self.count);
+        debug!("reading pos: {}", self.count);
         let count = self.inner.read(buf)?;
         self.count += count;
         Ok(count)
@@ -37,12 +39,12 @@ impl<'a, R: io::Read> io::Read for CpioFile<'a, R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let mut reader = self.reader.borrow_mut();
 
-        println!("remaining: {}", self.remaining);
+        debug!("remaining: {}", self.remaining);
         // maximum to read is the end of the contained file
         let max_read = usize::min(buf.len(), self.remaining);
         let bytes_read = reader.read(&mut buf[0..max_read])?;
         self.remaining -= bytes_read;
-        println!("returning: {}", bytes_read);
+        debug!("returning: {}", bytes_read);
 
         Ok(bytes_read)
     }
@@ -80,7 +82,7 @@ impl<'a, R: io::Read> CpioReader<R> {
 
         if reader.count > 0 {
             let trailing = 4 - (reader.count % 4);
-            println!("reading {} more bytes", trailing);
+            debug!("reading {} more bytes", trailing);
             let mut trailing_buf = [0u8; 4];
             reader.read_exact(&mut trailing_buf[0..trailing as usize])?;
         }
@@ -91,7 +93,7 @@ impl<'a, R: io::Read> CpioReader<R> {
             if let Err(err) = io::Read::read_exact(&mut *reader, &mut buf) {
                 return Err(ArchiveError::IOError { source: err });
             }
-            println!("magic: {}", str::from_utf8(&buf[..buf.len()]).unwrap());
+            debug!("magic: {}", str::from_utf8(&buf[..buf.len()]).unwrap());
             if buf != MAGIC_NUMBER {
                 return Err(ArchiveError::FormatError {
                     offset: reader.count,
@@ -136,14 +138,14 @@ impl<'a, R: io::Read> CpioReader<R> {
         }
         let filename = str::from_utf8(&buf[..(buf.len() - 1)])
             .map_err(|err| ArchiveError::ParseError(Box::new(err)))?;
-        println!("filename: {}", filename);
+        debug!("filename: {}", filename);
 
         // the size of the header is rounded up to the next 4-byte boundary
         {
             let bytes_read = HEADER_SIZE + namesize as usize;
             let mut trailing_buf = [0u8; 4];
             let trailing = (4 - (bytes_read % 4)) % 4;
-            println!("trailing: {}", trailing);
+            debug!("trailing: {}", trailing);
             reader
                 .read_exact(&mut trailing_buf[0..trailing])
                 .map_err(|err| ArchiveError::IOError { source: err })?;
@@ -173,8 +175,13 @@ mod test {
     use std::io::Read;
     use std::path;
 
+    fn init() {
+        let _ = env_logger::builder().is_test(true).try_init();
+    }
+
     #[test]
     fn empty() {
+        init();
         let mut path = path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         path.push("test/cpio/empty.cpio");
 
@@ -186,6 +193,7 @@ mod test {
 
     #[test]
     fn two_files() {
+        init();
         let mut path = path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         path.push("test/cpio/two-files.cpio");
 

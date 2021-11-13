@@ -1,5 +1,6 @@
 use std::io::Read;
 use std::{error, io};
+use log::{debug};
 use thiserror::Error;
 
 use crate::cpio::CpioReader;
@@ -63,9 +64,9 @@ fn read_manifest<R: io::Read>(cpio_reader: &CpioReader<R>) -> Result<Manifest, A
         .map(|mut file| {
             let mut burn_buf = vec![0u8; 1024];
             let num_bytes = file.read(&mut burn_buf).unwrap();
-            println!("manifest read {} bytes", num_bytes);
+            debug!("manifest read {} bytes", num_bytes);
             let data = std::str::from_utf8(&burn_buf[..num_bytes]).unwrap();
-            println!("got manifest data: {}", data);
+            debug!("got manifest data: {}", data);
 
             // TODO: need to read and parse manifest properly somewhere
             Manifest {}
@@ -81,8 +82,13 @@ mod test {
     use super::*;
     use std::{fs, path};
 
+    fn init() {
+        let _ = env_logger::builder().is_test(true).try_init();
+    }
+
     #[test]
     fn basics() {
+        init();
         let mut path = path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         path.push("test/archive/test.cpio");
 
