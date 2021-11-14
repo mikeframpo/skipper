@@ -4,7 +4,6 @@ use log::{debug};
 use thiserror::Error;
 
 use crate::cpio::CpioReader;
-use crate::payload;
 use crate::payload::Payload;
 
 pub struct Manifest;
@@ -49,10 +48,11 @@ impl<'a, R: io::Read> Archive<R> {
 
     fn get_next_payload(&'a self) -> Result<Option<Box<dyn Payload + 'a>>, ArchiveError> {
         let next_file = self.cpio_reader.read_next_file()?;
-        Ok(next_file.map(|next| {
+        Ok(next_file.map(|_next| {
             // TODO: implement a real payload handler
-            let payload = payload::test::TestPayload { reader: next };
-            Box::new(payload) as Box<dyn Payload>
+            //let payload = payload::test::TestPayload { reader: next };
+            //Box::new(payload) as Box<dyn Payload>
+            todo!()
         }))
     }
 }
@@ -79,6 +79,8 @@ fn process_payload(_manifest: &Manifest, _payload: Box<dyn Payload>) {
 
 #[cfg(test)]
 mod test {
+    use crate::payload::Status;
+
     use super::*;
     use std::{fs, path};
 
@@ -96,6 +98,6 @@ mod test {
         let archive = Archive::new(input);
 
         let payload = archive.get_next_payload().unwrap();
-        assert_eq!(payload.unwrap().deploy().unwrap(), 1024);
+        assert_eq!(payload.unwrap().deploy().unwrap(), Status::Complete);
     }
 }
