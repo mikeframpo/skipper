@@ -7,3 +7,9 @@ mod archive;
 
 #[allow(dead_code)]
 mod payload;
+
+#[allow(dead_code)]
+mod manifest;
+
+#[cfg(test)]
+mod test_utils;

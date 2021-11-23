@@ -64,17 +64,13 @@ impl<R: io::Read> Payload for ImagePayload<R> {
 #[cfg(test)]
 pub mod test {
     use super::*;
+    use crate::test_utils::*;
     use std::{path, process::Command};
-
-    fn init() {
-        let _ = env_logger::builder().is_test(true).try_init();
-    }
 
     #[test]
     fn test_deploy_image() {
-        init();
-        let mut path = path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        path.push("test/archive/test.img");
+        init_logging();
+        let path = test_path("archive/test.img");
         let img_file = File::open(path.clone()).unwrap();
 
         // TODO: should be able to generate a random test filename

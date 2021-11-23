@@ -29,9 +29,9 @@ impl<R: io::Read> io::Read for PosReader<R> {
 
 #[derive(Debug)]
 pub struct CpioFile<'a, R: io::Read> {
+    pub filename: String,
     filesize: u32,
     remaining: usize,
-    filename: String,
     reader: &'a cell::RefCell<PosReader<R>>,
 }
 
@@ -171,19 +171,14 @@ impl<'a, R: io::Read> CpioReader<R> {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::test_utils::*;
     use std::fs;
     use std::io::Read;
-    use std::path;
-
-    fn init() {
-        let _ = env_logger::builder().is_test(true).try_init();
-    }
 
     #[test]
     fn empty() {
-        init();
-        let mut path = path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        path.push("test/cpio/empty.cpio");
+        init_logging();
+        let path = test_path("cpio/empty.cpio");
 
         let mut file = fs::File::open(path).unwrap();
         let reader = CpioReader::new(&mut file);
@@ -193,9 +188,8 @@ mod test {
 
     #[test]
     fn two_files() {
-        init();
-        let mut path = path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        path.push("test/cpio/two-files.cpio");
+        init_logging();
+        let path = test_path("cpio/two-files.cpio");
 
         let file = fs::File::open(path).unwrap();
         let reader = CpioReader::new(file);

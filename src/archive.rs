@@ -1,12 +1,11 @@
+use log::debug;
 use std::io::Read;
 use std::{error, io};
-use log::{debug};
 use thiserror::Error;
 
 use crate::cpio::CpioReader;
+use crate::manifest::{self, Manifest};
 use crate::payload::Payload;
-
-pub struct Manifest;
 
 pub struct Archive<R: io::Read> {
     cpio_reader: CpioReader<R>,
@@ -28,12 +27,17 @@ pub enum ArchiveError {
     FormatError { offset: usize, reason: String },
 
     #[error("manifest not found")]
-    ManifestError,
-}
+    NoManifestError,
 
-#[derive(Error, Debug)]
-#[error("archive: manifest not found")]
-pub struct ManifestNotFoundError;
+    #[error("manifest parse error, cause: {0}")]
+    ManifestParseError(serde_json::Error),
+
+    #[error("archive: utf8 parse error, cause: {}", source)]
+    Utf8Error {
+        #[from]
+        source: std::str::Utf8Error,
+    },
+}
 
 impl<'a, R: io::Read> Archive<R> {
     fn new(reader: R) -> Archive<R> {
@@ -59,18 +63,25 @@ impl<'a, R: io::Read> Archive<R> {
 
 fn read_manifest<R: io::Read>(cpio_reader: &CpioReader<R>) -> Result<Manifest, ArchiveError> {
     let manifest_file = cpio_reader.read_next_file()?;
-    manifest_file
-        .ok_or(ArchiveError::ManifestError)
-        .map(|mut file| {
-            let mut burn_buf = vec![0u8; 1024];
-            let num_bytes = file.read(&mut burn_buf).unwrap();
-            debug!("manifest read {} bytes", num_bytes);
-            let data = std::str::from_utf8(&burn_buf[..num_bytes]).unwrap();
-            debug!("got manifest data: {}", data);
+    if manifest_file.is_none() {
+        return Err(ArchiveError::NoManifestError);
+    }
 
-            // TODO: need to read and parse manifest properly somewhere
-            Manifest {}
-        })
+    let mut manifest_file = manifest_file.unwrap();
+    if manifest_file.filename != "manifest.json" {
+        return Err(ArchiveError::NoManifestError);
+    }
+
+    let mut burn_buf = vec![0u8; 4096];
+    // TODO: need to make read_to_end work properly
+    let count = manifest_file.read(&mut burn_buf)?;
+    debug!("manifest read {} bytes", count);
+
+    let data = std::str::from_utf8(&burn_buf[..count])?;
+    debug!("manifest data: {}", data);
+    let manifest =
+        manifest::parse_manifest(data).map_err(|err| ArchiveError::ManifestParseError(err))?;
+    Ok(manifest)
 }
 
 fn process_payload(_manifest: &Manifest, _payload: Box<dyn Payload>) {
@@ -82,17 +93,17 @@ mod test {
     use crate::payload::Status;
 
     use super::*;
-    use std::{fs, path};
-
-    fn init() {
-        let _ = env_logger::builder().is_test(true).try_init();
-    }
+    use crate::test_utils::*;
+    use std::fs;
 
     #[test]
     fn basics() {
-        init();
-        let mut path = path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        path.push("test/archive/test.cpio");
+        // note that a new archive file can be generated with the following command
+        //
+        // $ echo -e "manifest.json\nimage-file" | cpio -ov --format=newc > test.cpio
+        //
+        init_logging();
+        let path = test_path("archive/test.cpio");
 
         let input = fs::File::open(path).unwrap();
         let archive = Archive::new(input);

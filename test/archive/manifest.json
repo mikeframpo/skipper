@@ -1,0 +1,9 @@
+{
+    "payloads": [
+        {
+            "type": "image",
+            "filename": "rootfs.img",
+            "dest": "/tmp/test-device"
+        }
+    ]
+}
