@@ -8,6 +8,8 @@ pub mod archive;
 #[allow(dead_code)]
 pub mod payload;
 
+pub mod config;
+
 #[allow(dead_code)]
 mod manifest;
 
