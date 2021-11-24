@@ -81,7 +81,7 @@ impl<'a, R: io::Read> CpioReader<R> {
         let mut reader = self.reader.borrow_mut();
 
         if reader.count > 0 {
-            let trailing = 4 - (reader.count % 4);
+            let trailing = (4 - (reader.count % 4)) % 4;
             debug!("reading {} more bytes", trailing);
             let mut trailing_buf = [0u8; 4];
             reader.read_exact(&mut trailing_buf[0..trailing as usize])?;
@@ -146,9 +146,7 @@ impl<'a, R: io::Read> CpioReader<R> {
             let mut trailing_buf = [0u8; 4];
             let trailing = (4 - (bytes_read % 4)) % 4;
             debug!("trailing: {}", trailing);
-            reader
-                .read_exact(&mut trailing_buf[0..trailing])
-                .map_err(|err| ArchiveError::IOError { source: err })?;
+            reader.read_exact(&mut trailing_buf[0..trailing])?;
         }
 
         if filename == TRAILER {
