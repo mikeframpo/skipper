@@ -1,15 +1,21 @@
 use log::debug;
+use std::cell::RefCell;
 use std::io::Read;
+use std::path::PathBuf;
+use std::slice::Iter;
 use std::{error, io};
 use thiserror::Error;
 
 use crate::cpio::CpioReader;
-use crate::manifest::{self, Manifest};
-use crate::payload::Payload;
+use crate::manifest::{self, Manifest, PayloadInfo};
+use crate::payload::{ImagePayload, Payload};
 
-pub struct Archive<R: io::Read> {
+pub struct Archive<'a, R: io::Read> {
     cpio_reader: CpioReader<R>,
     manifest: Manifest,
+
+    // refcell is used because a mut ref cannot be used (need to call get_next_payload in a loop)
+    payload_iter: RefCell<Option<Iter<'a, PayloadInfo>>>,
 }
 
 #[derive(Error, Debug)]
@@ -32,32 +38,70 @@ pub enum ArchiveError {
     #[error("manifest parse error, cause: {0}")]
     ManifestParseError(serde_json::Error),
 
+    #[error("manifest format error, cause: {}", reason)]
+    ManifestFormatError { reason: String },
+
     #[error("archive: utf8 parse error, cause: {}", source)]
     Utf8Error {
         #[from]
         source: std::str::Utf8Error,
     },
+
+    #[error("archive: unknown payload type: {0}")]
+    UnknownPayload(String),
 }
 
-impl<'a, R: io::Read> Archive<R> {
-    fn new(reader: R) -> Archive<R> {
+impl<'a, R: io::Read> Archive<'a, R> {
+    fn new(reader: R) -> Archive<'a, R> {
         let cpio_reader = CpioReader::new(reader);
         // TODO: return Result
         let manifest = read_manifest(&cpio_reader).unwrap();
         Archive {
             cpio_reader,
             manifest,
+            payload_iter: RefCell::new(None),
         }
     }
 
     fn get_next_payload(&'a self) -> Result<Option<Box<dyn Payload + 'a>>, ArchiveError> {
         let next_file = self.cpio_reader.read_next_file()?;
-        Ok(next_file.map(|_next| {
-            // TODO: implement a real payload handler
-            //let payload = payload::test::TestPayload { reader: next };
-            //Box::new(payload) as Box<dyn Payload>
-            todo!()
-        }))
+        match next_file {
+            Some(file) => {
+                let mut iter = self.payload_iter.borrow_mut();
+                if iter.is_none() {
+                    *iter = Some(self.manifest.payloads.iter());
+                }
+                let payload_info = iter.as_mut().unwrap().next().ok_or(
+                    ArchiveError::ManifestFormatError {
+                        reason: String::from(format!(
+                            "file {} in archive is missing manfest entry",
+                            file.filename
+                        )),
+                    },
+                )?;
+
+                // need to check that filename in the manifest matches the archive entry
+                if payload_info.filename != file.filename {
+                    return Err(ArchiveError::ManifestFormatError {
+                        reason: String::from(format!(
+                            "file {} in archive doesn't match manifest entry filename {}",
+                            file.filename, payload_info.filename
+                        )),
+                    });
+                }
+
+                match payload_info.payload_type.as_str() {
+                    "image" => {
+                        let payload = ImagePayload::new(file, PathBuf::from(&payload_info.dest));
+                        Ok(Some(Box::new(payload)))
+                    }
+                    _ => Err(ArchiveError::UnknownPayload(
+                        payload_info.payload_type.clone(),
+                    )),
+                }
+            }
+            None => Ok(None),
+        }
     }
 }
 
@@ -108,7 +152,8 @@ mod test {
         let input = fs::File::open(path).unwrap();
         let archive = Archive::new(input);
 
-        let payload = archive.get_next_payload().unwrap();
-        assert_eq!(payload.unwrap().deploy().unwrap(), Status::Complete);
+        while let Some(mut payload) = archive.get_next_payload().unwrap() {
+            assert_eq!(payload.deploy().unwrap(), Status::Complete);
+        }
     }
 }
