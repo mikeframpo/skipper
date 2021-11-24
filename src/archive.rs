@@ -52,7 +52,7 @@ pub enum ArchiveError {
 }
 
 impl<'a, R: io::Read> Archive<'a, R> {
-    fn new(reader: R) -> Archive<'a, R> {
+    pub fn new(reader: R) -> Archive<'a, R> {
         let cpio_reader = CpioReader::new(reader);
         // TODO: return Result
         let manifest = read_manifest(&cpio_reader).unwrap();
@@ -63,7 +63,7 @@ impl<'a, R: io::Read> Archive<'a, R> {
         }
     }
 
-    fn get_next_payload(&'a self) -> Result<Option<Box<dyn Payload + 'a>>, ArchiveError> {
+    pub fn get_next_payload(&'a self) -> Result<Option<Box<dyn Payload + 'a>>, ArchiveError> {
         let next_file = self.cpio_reader.read_next_file()?;
         match next_file {
             Some(file) => {

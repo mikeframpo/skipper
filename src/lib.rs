@@ -3,10 +3,10 @@
 mod cpio;
 
 #[allow(dead_code)]
-mod archive;
+pub mod archive;
 
 #[allow(dead_code)]
-mod payload;
+pub mod payload;
 
 #[allow(dead_code)]
 mod manifest;

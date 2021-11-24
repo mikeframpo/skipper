@@ -76,8 +76,8 @@ impl<'a, R: io::Read> CpioReader<R> {
     }
 
     pub fn read_next_file(&'a self) -> Result<Option<CpioFile<'a, R>>, ArchiveError> {
-        // TODO: the previous file needs to be completely read before we get here or we'll fail
-        //  this should be checked as an invariant
+        // the previous file needs to be completely read before we get here or we'll fail
+        //  if this is not the case, the cpio header checks should fail
         let mut reader = self.reader.borrow_mut();
 
         if reader.count > 0 {
