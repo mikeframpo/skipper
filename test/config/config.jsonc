@@ -1,0 +1,7 @@
+{
+    // the path to the block device for the "A-slot" rootfs
+    "rootfs_a": "/tmp/rootfs_a",
+
+    // the path to the block device for the "B-slot" rootfs
+    "rootfs_b": "/tmp/rootfs_b"
+}

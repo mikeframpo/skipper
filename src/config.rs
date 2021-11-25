@@ -4,6 +4,8 @@ use serde::Deserialize;
 use std::{fs::File, io::{self, Read}, path::Path};
 use thiserror::Error;
 
+use crate::json;
+
 #[derive(Debug, Error)]
 pub enum ConfigError {
     #[error("config: IOError, cause: {source}")]
@@ -37,7 +39,7 @@ impl Config {
     pub fn load_config<P: AsRef<Path>>(config_path: Option<P>) -> Result<Config,ConfigError> {
         let config_path = match &config_path {
             Some(path) => path.as_ref(),
-            None => Path::new("/data/skipper/config.json"),
+            None => Path::new("/data/skipper/config.jsonc"),
         };
         debug!("reading config file from {}", config_path.display());
         let mut file = File::open(config_path)?;
@@ -45,7 +47,7 @@ impl Config {
         let mut buf = String::new();
         file.read_to_string(&mut buf)?;
 
-        let config: Config = serde_json::from_str(&mut buf)?;
+        let config: Config = json::parse_jsonc(buf.as_str())?;
         Ok(config)
     }
 }
@@ -59,7 +61,7 @@ mod test {
     fn basics() {
         init_logging();
 
-        let config_path = test_path("config/config.json");
+        let config_path = test_path("config/config.jsonc");
         let config = Config::load_config(Some(config_path)).unwrap();
         assert_eq!(config.rootfs_a, "/tmp/rootfs_a");
         assert_eq!(config.rootfs_b, "/tmp/rootfs_b");

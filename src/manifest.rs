@@ -1,6 +1,8 @@
 use serde::Deserialize;
 use serde_json::Result;
 
+use crate::json;
+
 #[derive(Deserialize)]
 pub struct Manifest {
     pub payloads: Vec<PayloadInfo>,
@@ -19,7 +21,7 @@ pub struct PayloadInfo {
 }
 
 pub fn parse_manifest(buf: &str) -> Result<Manifest> {
-    serde_json::from_str(buf)
+    json::parse_jsonc(buf)
 }
 
 #[cfg(test)]

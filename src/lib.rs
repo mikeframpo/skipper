@@ -10,6 +10,8 @@ pub mod payload;
 
 pub mod config;
 
+pub mod json;
+
 #[allow(dead_code)]
 mod manifest;
 
