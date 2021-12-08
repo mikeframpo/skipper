@@ -65,28 +65,37 @@ impl<R: io::Read> Payload for ImagePayload<R> {
 pub mod test {
     use super::*;
     use crate::test_utils::*;
-    use std::{path, process::Command};
+    use std::process::Command;
 
-    #[test]
-    fn test_deploy_image() {
-        init_logging();
-        let path = test_path("archive/test.img");
-        let img_file = File::open(path.clone()).unwrap();
+    fn do_image_test(image_path: &PathBuf) {
+        let img_file = File::open(image_path.clone()).unwrap();
 
-        // TODO: should be able to generate a random test filename
-        let dest_path = path::PathBuf::from("/tmp/imgdest");
-
+        let dest_path = make_tempfile_path();
         let mut payload = ImagePayload::new(img_file, dest_path.clone());
         assert_eq!(payload.deploy().unwrap(), Status::Complete);
 
         // use the cmp utility to compare the files
         assert!(
             Command::new("cmp")
-                .arg(path)
+                .arg(image_path)
                 .arg(dest_path)
                 .output()
                 .unwrap()
                 .status.success()
         );
+    }
+
+    #[test]
+    fn test_deploy_image() {
+        init_logging();
+        let path = test_path("archive/test.img");
+        do_image_test(&path);
+    }
+
+    #[test]
+    fn test_deploy_larger_image() {
+        init_logging();
+        let path = test_path("archive/test-img-larger.img");
+        do_image_test(&path);
     }
 }
