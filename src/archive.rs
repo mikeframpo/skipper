@@ -49,6 +49,9 @@ pub enum ArchiveError {
 
     #[error("archive: unknown payload type: {0}")]
     UnknownPayload(String),
+
+    #[error("archive: payload deployment error, cause: {}", reason)]
+    PayloadDeployError { reason: String },
 }
 
 impl<'a, R: io::Read> Archive<'a, R> {
@@ -71,14 +74,16 @@ impl<'a, R: io::Read> Archive<'a, R> {
                 if iter.is_none() {
                     *iter = Some(self.manifest.payloads.iter());
                 }
-                let payload_info = iter.as_mut().unwrap().next().ok_or(
-                    ArchiveError::ManifestFormatError {
-                        reason: String::from(format!(
-                            "file {} in archive is missing manfest entry",
-                            file.filename
-                        )),
-                    },
-                )?;
+                let payload_info =
+                    iter.as_mut()
+                        .unwrap()
+                        .next()
+                        .ok_or(ArchiveError::ManifestFormatError {
+                            reason: String::from(format!(
+                                "file {} in archive is missing manfest entry",
+                                file.filename
+                            )),
+                        })?;
 
                 // need to check that filename in the manifest matches the archive entry
                 if payload_info.filename != file.filename {
@@ -92,7 +97,12 @@ impl<'a, R: io::Read> Archive<'a, R> {
 
                 match payload_info.payload_type.as_str() {
                     "image" => {
-                        let payload = ImagePayload::new(file, PathBuf::from(&payload_info.dest));
+                        let image_size = file.filesize;
+                        let payload = ImagePayload::new(
+                            file,
+                            image_size as u64,
+                            PathBuf::from(&payload_info.dest),
+                        );
                         Ok(Some(Box::new(payload)))
                     }
                     _ => Err(ArchiveError::UnknownPayload(
@@ -134,8 +144,6 @@ fn process_payload(_manifest: &Manifest, _payload: Box<dyn Payload>) {
 
 #[cfg(test)]
 mod test {
-    use crate::payload::Status;
-
     use super::*;
     use crate::test_utils::*;
     use std::fs;
@@ -153,7 +161,7 @@ mod test {
         let archive = Archive::new(input);
 
         while let Some(mut payload) = archive.get_next_payload().unwrap() {
-            assert_eq!(payload.deploy().unwrap(), Status::Complete);
+            assert_eq!(payload.deploy().unwrap(), ());
         }
     }
 }

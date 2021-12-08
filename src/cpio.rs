@@ -30,7 +30,7 @@ impl<R: io::Read> io::Read for PosReader<R> {
 #[derive(Debug)]
 pub struct CpioFile<'a, R: io::Read> {
     pub filename: String,
-    filesize: u32,
+    pub filesize: u32,
     remaining: usize,
     reader: &'a cell::RefCell<PosReader<R>>,
 }
