@@ -1,0 +1,3 @@
+[submodule "test/http-server"]
+	path = test/http-server
+	url = https://github.com/danvk/RangeHTTPServer.git

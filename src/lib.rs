@@ -17,3 +17,15 @@ mod manifest;
 
 #[cfg(test)]
 mod test_utils;
+
+#[cfg(test)]
+#[macro_use]
+extern crate lazy_static;
+
+#[cfg(test)]
+mod test_server;
+
+mod http_reader;
+
+#[cfg(test)]
+mod linux;
