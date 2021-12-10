@@ -25,6 +25,7 @@ extern crate lazy_static;
 #[cfg(test)]
 mod test_server;
 
+#[allow(dead_code)]
 mod http_reader;
 
 #[cfg(test)]

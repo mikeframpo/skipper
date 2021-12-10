@@ -1,6 +1,7 @@
 use std::process::Child;
 
 extern "C" {
+    // see "man 2 kill" for function details
     fn kill(pid: i32, sig: i32) -> i32;
 }
 

@@ -1,7 +1,8 @@
 use std::{
     collections::HashSet,
+    io::BufRead,
     path::{self},
-    process::{Child, Command},
+    process::{Child, Command, Stdio},
     sync::Mutex,
 };
 
@@ -39,7 +40,7 @@ fn free_server_port(port: u32) {
 
 pub struct TestServer {
     process: Child,
-    port: u32,
+    pub port: u32,
 }
 
 impl Drop for TestServer {
@@ -72,12 +73,29 @@ pub fn create_test_server<P: AsRef<path::Path>>(server_root: P) -> TestServer {
         server_root.to_str().unwrap()
     );
 
-    let mut cmd = Command::new("python3");
-    cmd.env("PYTHONPATH", server_module);
-    cmd.arg("-m").arg("RangeHTTPServer");
-    cmd.arg(server_port.to_string());
-    cmd.current_dir(server_root);
+    let mut server = Command::new("python3")
+        .env("PYTHONPATH", server_module)
+        .arg("-u")
+        .arg("-m")
+        .arg("RangeHTTPServer")
+        .arg(server_port.to_string())
+        .current_dir(server_root)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null()) // the server logs requests to stderr, which becomes noise in the test output
+        .spawn()
+        .expect("failed to start server process");
 
-    let server = cmd.spawn().expect("failed to start server process");
-    TestServer { process: server, port: server_port }
+    let stdout = server.stdout.as_mut().unwrap();
+    let mut reader = std::io::BufReader::new(stdout);
+
+    // note the -u flag to the python interpreter is required, else the piped
+    // output is buffered and we never see it until the process exits
+    let mut line = String::new();
+    reader.read_line(&mut line).unwrap();
+    assert!(line.starts_with("Serving HTTP"));
+
+    TestServer {
+        process: server,
+        port: server_port,
+    }
 }
