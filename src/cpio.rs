@@ -3,7 +3,7 @@ use std::io;
 use std::io::Read;
 use std::str;
 
-use log::debug;
+use log::*;
 
 use crate::archive::ArchiveError;
 
@@ -20,7 +20,7 @@ struct PosReader<R: io::Read> {
 
 impl<R: io::Read> io::Read for PosReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        debug!("reading pos: {}", self.count);
+        trace!("reading pos: {}", self.count);
         let count = self.inner.read(buf)?;
         self.count += count;
         Ok(count)
@@ -39,12 +39,11 @@ impl<'a, R: io::Read> io::Read for CpioFile<'a, R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let mut reader = self.reader.borrow_mut();
 
-        debug!("remaining: {}", self.remaining);
+        //trace!("remaining: {}", self.remaining);
         // maximum to read is the end of the contained file
         let max_read = usize::min(buf.len(), self.remaining);
         let bytes_read = reader.read(&mut buf[0..max_read])?;
         self.remaining -= bytes_read;
-        debug!("returning: {}", bytes_read);
 
         Ok(bytes_read)
     }
@@ -82,7 +81,7 @@ impl<'a, R: io::Read> CpioReader<R> {
 
         if reader.count > 0 {
             let trailing = (4 - (reader.count % 4)) % 4;
-            debug!("reading {} more bytes", trailing);
+            //trace!("reading {} more bytes", trailing);
             let mut trailing_buf = [0u8; 4];
             reader.read_exact(&mut trailing_buf[0..trailing as usize])?;
         }
@@ -145,7 +144,7 @@ impl<'a, R: io::Read> CpioReader<R> {
             let bytes_read = HEADER_SIZE + namesize as usize;
             let mut trailing_buf = [0u8; 4];
             let trailing = (4 - (bytes_read % 4)) % 4;
-            debug!("trailing: {}", trailing);
+            //trace!("trailing: {}", trailing);
             reader.read_exact(&mut trailing_buf[0..trailing])?;
         }
 

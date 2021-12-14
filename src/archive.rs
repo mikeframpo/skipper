@@ -145,11 +145,14 @@ fn process_payload(_manifest: &Manifest, _payload: Box<dyn Payload>) {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::http_reader::*;
+    use crate::test_server::*;
     use crate::test_utils::*;
     use std::fs;
+    use std::time::Duration;
 
     #[test]
-    fn basics() {
+    fn basics_from_file() {
         // note that a new archive file can be generated with the following command
         //
         // $ echo -e "manifest.json\nimage-file" | cpio -ov --format=newc > test.cpio
@@ -160,6 +163,23 @@ mod test {
         let input = fs::File::open(path).unwrap();
         let archive = Archive::new(input);
 
+        while let Some(mut payload) = archive.get_next_payload().unwrap() {
+            assert_eq!(payload.deploy().unwrap(), ());
+        }
+    }
+
+    #[test]
+    fn basics_from_http() {
+        init_logging();
+        let server_args = TestServerArgs::new("archive");
+        let test_server = create_test_server(server_args);
+
+        let reader = HttpReader::new(
+            &format!("http://127.0.0.1:{}/test.cpio", test_server.port),
+            Duration::from_secs(1)
+        ).unwrap();
+
+        let archive = Archive::new(reader);
         while let Some(mut payload) = archive.get_next_payload().unwrap() {
             assert_eq!(payload.deploy().unwrap(), ());
         }

@@ -31,7 +31,7 @@ impl Iterator for RangeHeaderIterator {
         let bytes_remaining = self.content_length - self.byte_pos;
         if bytes_remaining > 0 {
             let chunk = std::cmp::min(CHUNK_SIZE, bytes_remaining);
-            let range = format!("bytes={}-{}", self.byte_pos, self.byte_pos + chunk);
+            let range = format!("bytes={}-{}", self.byte_pos, self.byte_pos + chunk - 1);
 
             self.byte_pos += chunk;
             return Some(range);
@@ -58,9 +58,9 @@ impl ChunkBuffer {
     }
 
     fn read_bytes(&mut self, dest: &mut [u8]) -> usize {
-        let count = std::cmp::min(dest.len(), self.buf.len());
+        let to_read = std::cmp::min(dest.len(), self.len());
 
-        let mut src = &self.buf[self.read_pos..self.read_pos + count];
+        let mut src = &self.buf[self.read_pos..self.read_pos + to_read];
         let mut dest = dest;
         let count =
             std::io::copy(&mut src, &mut dest).expect("failed to copy chunk to dest") as usize;
