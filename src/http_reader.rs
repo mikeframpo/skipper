@@ -1,12 +1,13 @@
-use log::*;
 use std::io;
 use std::str::FromStr;
-use thiserror::Error;
-use reqwest::blocking::Client;
+use std::time::Duration;
+use log::*;
 use reqwest::header::*;
+use reqwest::blocking::Client;
+use thiserror::Error;
 
 #[derive(Error, Debug)]
-enum HttpError {
+pub enum HttpError {
     #[error("http: request error, cause: {source}")]
     RequestError {
         #[from]
@@ -74,10 +75,10 @@ impl ChunkBuffer {
         self.buf.clear();
         self.buf.extend_from_slice(src);
         self.read_pos = 0;
-    } 
+    }
 }
 
-struct HttpReader {
+pub struct HttpReader {
     url: String,
     client: Client,
     ranges: RangeHeaderIterator,
@@ -85,8 +86,9 @@ struct HttpReader {
 }
 
 impl HttpReader {
-    pub fn new(url: &str) -> Result<HttpReader, HttpError> {
-        let client = Client::new();
+    pub fn new(url: &str, timeout: Duration) -> Result<HttpReader, HttpError> {
+        let client_builder = Client::builder();
+        let client = client_builder.timeout(timeout).build()?;
 
         // request headers
         let resp = client.head(url).send()?;
@@ -121,8 +123,8 @@ impl io::Read for HttpReader {
         // DONE 1. read entire body into buffer, save to tmp
         //      get this working with the test server
         // DONE 2. implement range requests, limiting buffer size
-        // 3. implement more complex testing
-        //      long delay in-between buffer fetch (infinite)
+        // DONE 3. implement more complex testing
+        //      - latency - delay in-between buffer fetch (infinite)
         // 4. handle X retries on failed buffer fetch before abort
         //      and configurable client timeouts
         // 5. possibly execute requests asynchronously,
@@ -144,7 +146,7 @@ impl io::Read for HttpReader {
                     .header(RANGE, range)
                     .send()
                     .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
-                
+
                 // copy the body to the chunk buffer
                 self.buf.write_bytes(&req.bytes().unwrap());
                 // copy the chunk buffer to the output
@@ -168,13 +170,32 @@ mod test {
     #[test]
     fn test_read_to_end() {
         init_logging();
-        let server = create_test_server("http-roots/test1");
-        let url = format!("http://127.0.0.1:{}/test-file", server.port);
+        let server_args = TestServerArgs::new("http-roots/test1");
+        let server = create_test_server(server_args);
 
-        let mut http_reader = HttpReader::new(&url).unwrap();
+        let url = format!("http://127.0.0.1:{}/test-file", server.port);
+        let mut http_reader = HttpReader::new(&url, Duration::from_secs(1)).unwrap();
         let mut buf: Vec<u8> = Vec::new();
         let count = http_reader.read_to_end(&mut buf).unwrap();
 
         assert_eq!(count, 1024);
+    }
+
+    #[test]
+    fn test_timeout() {
+        init_logging();
+        let mut server_args = TestServerArgs::new("http-roots/test1");
+        // negative latency is infinite
+        server_args.response_latency(-1f32);
+        let server = create_test_server(server_args);
+
+        let url = format!("http://127.0.0.1:{}/test-file", server.port);
+        let err = HttpReader::new(&url, Duration::from_secs(1))
+            .err()
+            .expect("expected reader to time out!");
+        match err {
+            HttpError::RequestError { source } => { assert!(source.is_timeout()) },
+            _ => {}
+        }
     }
 }

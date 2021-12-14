@@ -1,7 +1,7 @@
 use std::{
     collections::HashSet,
     io::BufRead,
-    path::{self},
+    path::PathBuf,
     process::{Child, Command, Stdio},
     sync::Mutex,
 };
@@ -62,10 +62,29 @@ impl Drop for TestServer {
     }
 }
 
-pub fn create_test_server<P: AsRef<path::Path>>(server_root: P) -> TestServer {
+pub struct TestServerArgs {
+    server_root: PathBuf,
+    response_latency: Option<f32>,
+}
+
+impl TestServerArgs {
+    pub fn new(server_root: &str) -> TestServerArgs {
+        TestServerArgs {
+            server_root: PathBuf::from(server_root),
+            response_latency: None,
+        }
+    }
+
+    pub fn response_latency(&mut self, latency: f32) -> &Self {
+        self.response_latency = Some(latency);
+        self
+    }
+}
+
+pub fn create_test_server(args: TestServerArgs) -> TestServer {
     let server_port = get_server_port();
     let server_module = test_path("http-server");
-    let server_root = test_path(server_root);
+    let server_root = test_path(args.server_root);
 
     debug!(
         "starting test server on port: {}, root path: {}",
@@ -73,17 +92,26 @@ pub fn create_test_server<P: AsRef<path::Path>>(server_root: P) -> TestServer {
         server_root.to_str().unwrap()
     );
 
-    let mut server = Command::new("python3")
+    let mut server = Command::new("python3");
+    server
         .env("PYTHONPATH", server_module)
         .arg("-u")
         .arg("-m")
         .arg("RangeHTTPServer")
-        .arg(server_port.to_string())
+        .arg(server_port.to_string());
+
+    if let Some(latency) = args.response_latency {
+        server.arg("--response-latency").arg(latency.to_string());
+    }
+
+    server
         .current_dir(server_root)
         .stdout(Stdio::piped())
-        .stderr(Stdio::null()) // the server logs requests to stderr, which becomes noise in the test output
-        .spawn()
-        .expect("failed to start server process");
+        // the server logs requests to stderr, which becomes noise in the test output
+        .stderr(Stdio::null());
+
+    // start the server
+    let mut server = server.spawn().expect("failed to start server process");
 
     let stdout = server.stdout.as_mut().unwrap();
     let mut reader = std::io::BufReader::new(stdout);
