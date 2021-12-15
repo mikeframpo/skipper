@@ -1,4 +1,4 @@
-use log::debug;
+use log::*;
 use std::cell::RefCell;
 use std::io::Read;
 use std::path::PathBuf;
@@ -32,8 +32,14 @@ pub enum ArchiveError {
     #[error("archive: format error in field: {} at offset: {}", reason, offset)]
     FormatError { offset: usize, reason: String },
 
-    #[error("manifest not found")]
-    NoManifestError,
+    #[error("archive: file not found, cause: {reason}")]
+    FileNotFoundError { reason: String },
+
+    #[error("archive: buffer insufficient for destination file")]
+    FileBufferSizeError,
+
+    #[error("checksum: format error, cause {reason}")]
+    ChecksumFormatError { reason: String },
 
     #[error("manifest parse error, cause: {0}")]
     ManifestParseError(serde_json::Error),
@@ -115,26 +121,50 @@ impl<'a, R: io::Read> Archive<'a, R> {
     }
 }
 
-fn read_manifest<R: io::Read>(cpio_reader: &CpioReader<R>) -> Result<Manifest, ArchiveError> {
-    let manifest_file = cpio_reader.read_next_file()?;
-    if manifest_file.is_none() {
-        return Err(ArchiveError::NoManifestError);
+struct TextFile<'a> {
+    filename: String,
+    content: &'a str,
+}
+
+fn read_text_file<'a, R: io::Read>(
+    cpio_reader: &CpioReader<R>,
+    buf: &'a mut [u8],
+) -> Result<TextFile<'a>, ArchiveError> {
+    let mut file = match cpio_reader.read_next_file()? {
+        Some(inner) => inner,
+        None => {
+            return Err(ArchiveError::FileNotFoundError {
+                reason: String::from("expected next file but none found"),
+            })
+        }
+    };
+    if file.filesize as usize > buf.len() {
+        return Err(ArchiveError::FileBufferSizeError);
     }
 
-    let mut manifest_file = manifest_file.unwrap();
-    if manifest_file.filename != "manifest.json" {
-        return Err(ArchiveError::NoManifestError);
-    }
-
-    let mut burn_buf = vec![0u8; 4096];
     // TODO: need to make read_to_end work properly
-    let count = manifest_file.read(&mut burn_buf)?;
-    debug!("manifest read {} bytes", count);
+    let count = file.read(buf)?;
+    let data = std::str::from_utf8(&buf[..count])?;
+    trace!("text file data: {}", data);
 
-    let data = std::str::from_utf8(&burn_buf[..count])?;
-    debug!("manifest data: {}", data);
-    let manifest =
-        manifest::parse_manifest(data).map_err(|err| ArchiveError::ManifestParseError(err))?;
+    Ok(TextFile {
+        filename: String::from(file.filename),
+        content: data,
+    })
+}
+
+fn read_manifest<R: io::Read>(cpio_reader: &CpioReader<R>) -> Result<Manifest, ArchiveError> {
+    let mut buf = [0u8; 4096];
+    let text_file = read_text_file(cpio_reader, &mut buf)?;
+
+    if text_file.filename != "manifest.json" {
+        return Err(ArchiveError::FileNotFoundError {
+            reason: format!("expected manifest file, got {}", text_file.filename),
+        });
+    }
+
+    let manifest = manifest::parse_manifest(text_file.content)
+        .map_err(|err| ArchiveError::ManifestParseError(err))?;
     Ok(manifest)
 }
 
@@ -176,8 +206,9 @@ mod test {
 
         let reader = HttpReader::new(
             &format!("http://127.0.0.1:{}/test.cpio", test_server.port),
-            Duration::from_secs(1)
-        ).unwrap();
+            Duration::from_secs(1),
+        )
+        .unwrap();
 
         let archive = Archive::new(reader);
         while let Some(mut payload) = archive.get_next_payload().unwrap() {

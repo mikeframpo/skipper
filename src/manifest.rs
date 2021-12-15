@@ -38,7 +38,7 @@ mod test {
         let mut buf = String::new();
         file.read_to_string(&mut buf).unwrap();
 
-        let val: Manifest = serde_json::from_str(&buf).unwrap();
+        let val: Manifest = parse_manifest(&buf).unwrap();
         assert_eq!("image", val.payloads[0].payload_type);
         assert_eq!("rootfs.img", val.payloads[0].filename);
         assert_eq!("/tmp/test-device", val.payloads[0].dest);

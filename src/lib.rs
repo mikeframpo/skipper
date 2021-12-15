@@ -30,3 +30,6 @@ pub mod http_reader;
 
 #[cfg(test)]
 mod linux;
+
+#[allow(dead_code)]
+mod checksum;
