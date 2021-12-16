@@ -6,9 +6,10 @@ use std::slice::Iter;
 use std::{error, io};
 use thiserror::Error;
 
-use crate::cpio::CpioReader;
+use crate::checksum::Checksum;
+use crate::cpio::{CpioFile, CpioReader};
 use crate::manifest::{self, Manifest, PayloadInfo};
-use crate::payload::{ImagePayload, Payload};
+use crate::payload::{self, ImagePayload, Payload};
 
 pub struct Archive<'a, R: io::Read> {
     cpio_reader: CpioReader<R>,
@@ -41,6 +42,9 @@ pub enum ArchiveError {
     #[error("checksum: format error, cause {reason}")]
     ChecksumFormatError { reason: String },
 
+    #[error("checksum: mismatch error in file {filename}")]
+    ChecksumMismatchError { filename: String },
+
     #[error("manifest parse error, cause: {0}")]
     ManifestParseError(serde_json::Error),
 
@@ -72,52 +76,64 @@ impl<'a, R: io::Read> Archive<'a, R> {
         }
     }
 
-    pub fn get_next_payload(&'a self) -> Result<Option<Box<dyn Payload + 'a>>, ArchiveError> {
-        let next_file = self.cpio_reader.read_next_file()?;
-        match next_file {
-            Some(file) => {
-                let mut iter = self.payload_iter.borrow_mut();
-                if iter.is_none() {
-                    *iter = Some(self.manifest.payloads.iter());
-                }
-                let payload_info =
-                    iter.as_mut()
-                        .unwrap()
-                        .next()
-                        .ok_or(ArchiveError::ManifestFormatError {
-                            reason: String::from(format!(
-                                "file {} in archive is missing manfest entry",
-                                file.filename
-                            )),
-                        })?;
-
-                // need to check that filename in the manifest matches the archive entry
-                if payload_info.filename != file.filename {
-                    return Err(ArchiveError::ManifestFormatError {
-                        reason: String::from(format!(
-                            "file {} in archive doesn't match manifest entry filename {}",
-                            file.filename, payload_info.filename
-                        )),
-                    });
-                }
-
-                match payload_info.payload_type.as_str() {
-                    "image" => {
-                        let image_size = file.filesize;
-                        let payload = ImagePayload::new(
-                            file,
-                            image_size as u64,
-                            PathBuf::from(&payload_info.dest),
-                        );
-                        Ok(Some(Box::new(payload)))
-                    }
-                    _ => Err(ArchiveError::UnknownPayload(
-                        payload_info.payload_type.clone(),
-                    )),
-                }
-            }
-            None => Ok(None),
+    fn get_next_payload(
+        &'a self,
+        file: &CpioFile<R>,
+    ) -> Result<Option<Box<dyn Payload + 'a>>, ArchiveError> {
+        let mut iter = self.payload_iter.borrow_mut();
+        if iter.is_none() {
+            *iter = Some(self.manifest.payloads.iter());
         }
+        let payload_info =
+            iter.as_mut()
+                .unwrap()
+                .next()
+                .ok_or(ArchiveError::ManifestFormatError {
+                    reason: String::from(format!(
+                        "file {} in archive is missing manfest entry",
+                        file.filename
+                    )),
+                })?;
+
+        // need to check that filename in the manifest matches the archive entry
+        if payload_info.filename != file.filename {
+            return Err(ArchiveError::ManifestFormatError {
+                reason: String::from(format!(
+                    "file {} in archive doesn't match manifest entry filename {}",
+                    file.filename, payload_info.filename
+                )),
+            });
+        }
+
+        match payload_info.payload_type.as_str() {
+            "image" => {
+                let image_size = file.filesize;
+                let payload =
+                    ImagePayload::new(image_size as u64, PathBuf::from(&payload_info.dest));
+                Ok(Some(Box::new(payload)))
+            }
+            _ => Err(ArchiveError::UnknownPayload(
+                payload_info.payload_type.clone(),
+            )),
+        }
+    }
+
+    pub fn deploy(&'a self) -> Result<(), ArchiveError> {
+        while let Some(mut file) = self.cpio_reader.read_next_file()? {
+            let payload = self.get_next_payload(&file)?;
+            if let Some(payload) = payload {
+                payload::deploy_payload(&mut file, payload)?;
+
+                //todo: need to parse checksum file and do the lookup here
+                let cksum_expected = Checksum::from_str("0")?;
+                file.finalise(cksum_expected)?;
+            } else {
+                return Err(ArchiveError::UnknownPayload(format!(
+                    "got file but no payload!"
+                )));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -168,10 +184,6 @@ fn read_manifest<R: io::Read>(cpio_reader: &CpioReader<R>) -> Result<Manifest, A
     Ok(manifest)
 }
 
-fn process_payload(_manifest: &Manifest, _payload: Box<dyn Payload>) {
-    todo!()
-}
-
 #[cfg(test)]
 mod test {
     use super::*;
@@ -193,9 +205,7 @@ mod test {
         let input = fs::File::open(path).unwrap();
         let archive = Archive::new(input);
 
-        while let Some(mut payload) = archive.get_next_payload().unwrap() {
-            assert_eq!(payload.deploy().unwrap(), ());
-        }
+        assert_eq!(archive.deploy().unwrap(), ());
     }
 
     #[test]
@@ -211,8 +221,6 @@ mod test {
         .unwrap();
 
         let archive = Archive::new(reader);
-        while let Some(mut payload) = archive.get_next_payload().unwrap() {
-            assert_eq!(payload.deploy().unwrap(), ());
-        }
+        assert_eq!(archive.deploy().unwrap(), ());
     }
 }

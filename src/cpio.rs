@@ -6,6 +6,7 @@ use std::str;
 use log::*;
 
 use crate::archive::ArchiveError;
+use crate::checksum::*;
 
 const HEADER_SIZE: usize = 110;
 const MAGIC_NUMBER: &[u8] = b"070701";
@@ -27,12 +28,13 @@ impl<R: io::Read> io::Read for PosReader<R> {
     }
 }
 
-#[derive(Debug)]
+//#[derive(Debug)]
 pub struct CpioFile<'a, R: io::Read> {
     pub filename: String,
     pub filesize: u32,
     remaining: usize,
     reader: &'a cell::RefCell<PosReader<R>>,
+    cksum: Checksum,
 }
 
 impl<'a, R: io::Read> io::Read for CpioFile<'a, R> {
@@ -45,7 +47,22 @@ impl<'a, R: io::Read> io::Read for CpioFile<'a, R> {
         let bytes_read = reader.read(&mut buf[0..max_read])?;
         self.remaining -= bytes_read;
 
+        // update the running checksum
+        self.cksum.update(&buf[0..bytes_read]);
+
         Ok(bytes_read)
+    }
+}
+
+impl<'a, R: io::Read> CpioFile<'a, R> {
+    pub fn finalise(&mut self, cksum_expected: Checksum) -> Result<(), ArchiveError> {
+        assert_eq!(self.remaining, 0);
+
+        self.cksum.finalise();
+        if self.cksum != cksum_expected {
+            return Err(ArchiveError::ChecksumMismatchError { filename: self.filename.clone() });
+        }
+        Ok(())
     }
 }
 
@@ -158,6 +175,7 @@ impl<'a, R: io::Read> CpioReader<R> {
             remaining: filesize as usize,
             filename: String::from(filename),
             reader: &self.reader,
+            cksum: Checksum::new_hashable(),
         };
         cpio_file.remaining = cpio_file.filesize as usize;
 
@@ -179,8 +197,11 @@ mod test {
 
         let mut file = fs::File::open(path).unwrap();
         let reader = CpioReader::new(&mut file);
-        let err = reader.read_next_file().unwrap_err();
-        assert!(matches!(err, ArchiveError::IOError { .. }));
+        if let Err(err) = reader.read_next_file() {
+            assert!(matches!(err, ArchiveError::IOError { .. }));
+        } else {
+            panic!("expected empty archive to error");
+        }
     }
 
     #[test]

@@ -10,32 +10,9 @@ use crate::archive::ArchiveError;
 
 // Represents the disk-image, file, directory payload data to be written to disk.
 pub trait Payload {
-    fn read_block(&mut self, buf: &mut [u8]) -> Result<usize, ArchiveError>;
-
     fn write_begin(&mut self) -> Result<(), ArchiveError>;
 
     fn write_block(&mut self, buf: &[u8]) -> Result<Status, ArchiveError>;
-
-    fn deploy(&mut self) -> Result<(), ArchiveError> {
-        self.write_begin()?;
-
-        loop {
-            let mut buf = vec![0u8; 2048];
-            let read_count = self.read_block(&mut buf)?;
-
-            if read_count == 0 {
-                return Err(ArchiveError::PayloadDeployError {
-                    reason: String::from("payload read completed before write finished"),
-                });
-            }
-
-            let write_status = self.write_block(&buf[0..read_count])?;
-            if write_status == Status::Complete {
-                return Ok(());
-            }
-            // else { Status::Pending, keep reading }
-        }
-    }
 }
 
 #[derive(PartialEq, Debug)]
@@ -44,18 +21,16 @@ pub enum Status {
     Pending,
 }
 
-pub struct ImagePayload<R: io::Read> {
-    reader: R,
+pub struct ImagePayload {
     image_size: u64,
     remaining: u64,
     dest: PathBuf,
     dest_file: Option<File>,
 }
 
-impl<R: io::Read> ImagePayload<R> {
-    pub fn new(reader: R, image_size: u64, dest: PathBuf) -> ImagePayload<R> {
+impl ImagePayload {
+    pub fn new(image_size: u64, dest: PathBuf) -> ImagePayload {
         ImagePayload {
-            reader,
             image_size,
             remaining: image_size,
             dest,
@@ -64,13 +39,7 @@ impl<R: io::Read> ImagePayload<R> {
     }
 }
 
-impl<R: io::Read> Payload for ImagePayload<R> {
-    fn read_block(&mut self, buf: &mut [u8]) -> Result<usize, ArchiveError> {
-        let read_count = self.reader.read(buf)?;
-        debug!("read {} bytes from reader", read_count);
-        Ok(read_count)
-    }
-
+impl Payload for ImagePayload {
     fn write_begin(&mut self) -> Result<(), ArchiveError> {
         // open the destination file
         // TODO: I think this will fail for a block device
@@ -104,6 +73,37 @@ impl<R: io::Read> Payload for ImagePayload<R> {
     }
 }
 
+fn read_block<R: io::Read>(reader: &mut R, buf: &mut [u8]) -> Result<usize, ArchiveError> {
+    let read_count = reader.read(buf)?;
+    debug!("read {} bytes from reader", read_count);
+    Ok(read_count)
+}
+
+pub fn deploy_payload<'a, R: io::Read>(
+    reader: &mut R,
+    payload: Box<dyn Payload + 'a>,
+) -> Result<(), ArchiveError> {
+    let mut payload = payload;
+    payload.write_begin()?;
+
+    loop {
+        let mut buf = vec![0u8; 2048];
+        let read_count = read_block(reader, &mut buf)?;
+
+        if read_count == 0 {
+            return Err(ArchiveError::PayloadDeployError {
+                reason: String::from("payload read completed before write finished"),
+            });
+        }
+
+        let write_status = payload.write_block(&buf[0..read_count])?;
+        if write_status == Status::Complete {
+            return Ok(());
+        }
+        // else { Status::Pending, keep reading }
+    }
+}
+
 #[cfg(test)]
 pub mod test {
     use super::*;
@@ -111,12 +111,15 @@ pub mod test {
     use std::process::Command;
 
     fn do_image_test(image_path: &PathBuf) {
-        let img_file = File::open(image_path.clone()).unwrap();
+        let mut img_file = File::open(image_path.clone()).unwrap();
         let file_size = img_file.metadata().unwrap().len();
 
         let dest_path = make_tempfile_path();
-        let mut payload = ImagePayload::new(img_file, file_size, dest_path.clone());
-        assert_eq!(payload.deploy().unwrap(), ());
+        let payload = ImagePayload::new(file_size, dest_path.clone());
+        assert_eq!(
+            deploy_payload(&mut img_file, Box::new(payload)).unwrap(),
+            ()
+        );
 
         // use the cmp utility to compare the files
         assert!(Command::new("cmp")

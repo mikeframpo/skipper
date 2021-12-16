@@ -1,7 +1,7 @@
 use std::{fs::File, path::PathBuf};
 
 use clap::{App, Arg};
-use skipper::{archive::Archive};
+use skipper::archive::Archive;
 
 fn main() {
     let matches = App::new("Skipper deploy")
@@ -14,8 +14,6 @@ fn main() {
     let source = File::open(PathBuf::from(source)).unwrap();
 
     let archive = Archive::new(source);
-    while let Some(mut payload) = archive.get_next_payload().unwrap() {
-        assert_eq!(payload.deploy().unwrap(), ());
-    }
+    archive.deploy().unwrap();
     println!("Deployment complete");
 }
