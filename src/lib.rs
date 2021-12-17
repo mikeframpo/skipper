@@ -12,8 +12,7 @@ pub mod config;
 
 pub mod json;
 
-#[allow(dead_code)]
-mod manifest;
+pub mod manifest;
 
 #[cfg(test)]
 mod test_utils;
@@ -32,4 +31,6 @@ pub mod http_reader;
 mod linux;
 
 #[allow(dead_code)]
-mod checksum;
+pub mod checksum;
+
+pub mod utils;

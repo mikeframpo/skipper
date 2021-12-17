@@ -8,8 +8,10 @@ use thiserror::Error;
 
 use crate::checksum::ChecksumLookup;
 use crate::cpio::{CpioFile, CpioReader};
-use crate::manifest::{self, Manifest, PayloadInfo};
+use crate::manifest::{self, Manifest, PayloadInfo, PayloadType};
 use crate::payload::{self, ImagePayload, Payload};
+
+pub const CHECKSUMS_FILENAME: &str = "checksums";
 
 pub struct Archive<'a, R: io::Read> {
     cpio_reader: CpioReader<R>,
@@ -112,16 +114,13 @@ impl<'a, R: io::Read> Archive<'a, R> {
             });
         }
 
-        match payload_info.payload_type.as_str() {
-            "image" => {
+        match payload_info.payload_type {
+            PayloadType::Image => {
                 let image_size = file.filesize;
                 let payload =
                     ImagePayload::new(image_size as u64, PathBuf::from(&payload_info.dest));
                 Ok(Some(Box::new(payload)))
             }
-            _ => Err(ArchiveError::UnknownPayload(
-                payload_info.payload_type.clone(),
-            )),
         }
     }
 
@@ -208,7 +207,7 @@ fn read_checksum_file<R: io::Read>(
 ) -> Result<ChecksumLookup, ArchiveError> {
     read_and_parse_text_file(
         cpio_reader,
-        "checksums",
+        CHECKSUMS_FILENAME,
         ChecksumLookup::parse_checksum_file,
     )
 }
@@ -217,7 +216,7 @@ fn read_manifest<R: io::Read>(cpio_reader: &CpioReader<R>) -> Result<Manifest, A
     let parse_func = |content: &str| {
         manifest::parse_manifest(content).map_err(|err| ArchiveError::ManifestParseError(err))
     };
-    read_and_parse_text_file(cpio_reader, "manifest.json", parse_func)
+    read_and_parse_text_file(cpio_reader, "manifest.jsonc", parse_func)
 }
 
 #[cfg(test)]

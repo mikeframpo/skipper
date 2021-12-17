@@ -1,3 +1,4 @@
+
 use serde::Deserialize;
 use serde_json::Result;
 
@@ -9,9 +10,15 @@ pub struct Manifest {
 }
 
 #[derive(Deserialize)]
+pub enum PayloadType {
+    #[serde(rename = "image")]
+    Image
+}
+
+#[derive(Deserialize)]
 pub struct PayloadInfo {
     #[serde(rename = "type")]
-    pub payload_type: String,
+    pub payload_type: PayloadType,
 
     pub filename: String,
     pub dest: String,
@@ -39,7 +46,7 @@ mod test {
         file.read_to_string(&mut buf).unwrap();
 
         let val: Manifest = parse_manifest(&buf).unwrap();
-        assert_eq!("image", val.payloads[0].payload_type);
+        assert!(matches!(val.payloads[0].payload_type, PayloadType::Image));
         assert_eq!("rootfs.img", val.payloads[0].filename);
         assert_eq!("/tmp/test-device", val.payloads[0].dest);
     }

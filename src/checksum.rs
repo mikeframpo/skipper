@@ -36,6 +36,10 @@ impl Checksum {
             hasher: None,
         })
     }
+
+    pub fn to_string(&self) -> String {
+        format!("{:08X?}", self.final_value.unwrap())
+    }
 }
 
 impl PartialEq for Checksum {
