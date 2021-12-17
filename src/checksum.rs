@@ -2,6 +2,7 @@ use crate::archive::ArchiveError;
 use crc32fast::Hasher;
 use std::collections::HashMap;
 
+#[derive(Debug)]
 pub struct Checksum {
     final_value: Option<u32>,
     hasher: Option<Hasher>,
@@ -69,10 +70,12 @@ impl ChecksumLookup {
         Ok(ChecksumLookup { cksums })
     }
 
-    pub fn get_checksum(&self, filename: &str) -> Option<u32> {
-        self.cksums
-            .get(filename)
-            .map(|val| val.final_value.unwrap())
+    pub fn get_checksum(&self, filename: &str) -> Option<Checksum> {
+        // return a value containing the final value but no hasher
+        self.cksums.get(filename).map(|cksum| Checksum {
+            final_value: cksum.final_value.clone(),
+            hasher: None,
+        })
     }
 }
 
@@ -91,6 +94,9 @@ mod test {
         file.read_to_string(&mut buf).unwrap();
 
         let cksums = ChecksumLookup::parse_checksum_file(&buf).unwrap();
-        assert_eq!(cksums.get_checksum("manifest.json").unwrap(), 2882343476);
+        assert_eq!(
+            cksums.get_checksum("manifest.json").unwrap(),
+            Checksum::from_str("ABCD1234").unwrap()
+        );
     }
 }

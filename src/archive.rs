@@ -6,13 +6,14 @@ use std::slice::Iter;
 use std::{error, io};
 use thiserror::Error;
 
-use crate::checksum::Checksum;
+use crate::checksum::ChecksumLookup;
 use crate::cpio::{CpioFile, CpioReader};
 use crate::manifest::{self, Manifest, PayloadInfo};
 use crate::payload::{self, ImagePayload, Payload};
 
 pub struct Archive<'a, R: io::Read> {
     cpio_reader: CpioReader<R>,
+    checksums: ChecksumLookup,
     manifest: Manifest,
 
     // refcell is used because a mut ref cannot be used (need to call get_next_payload in a loop)
@@ -42,6 +43,9 @@ pub enum ArchiveError {
     #[error("checksum: format error, cause {reason}")]
     ChecksumFormatError { reason: String },
 
+    #[error("checksum: checksum missing error, for file: {filename}")]
+    ChecksumMissingError { filename: String },
+
     #[error("checksum: mismatch error in file {filename}")]
     ChecksumMismatchError { filename: String },
 
@@ -65,15 +69,18 @@ pub enum ArchiveError {
 }
 
 impl<'a, R: io::Read> Archive<'a, R> {
-    pub fn new(reader: R) -> Archive<'a, R> {
+    pub fn new(reader: R) -> Result<Archive<'a, R>, ArchiveError> {
         let cpio_reader = CpioReader::new(reader);
-        // TODO: return Result
-        let manifest = read_manifest(&cpio_reader).unwrap();
-        Archive {
+
+        let checksums = read_checksum_file(&cpio_reader)?;
+        let manifest = read_manifest(&cpio_reader)?;
+
+        Ok(Archive {
             cpio_reader,
+            checksums,
             manifest,
             payload_iter: RefCell::new(None),
-        }
+        })
     }
 
     fn get_next_payload(
@@ -124,8 +131,11 @@ impl<'a, R: io::Read> Archive<'a, R> {
             if let Some(payload) = payload {
                 payload::deploy_payload(&mut file, payload)?;
 
-                //todo: need to parse checksum file and do the lookup here
-                let cksum_expected = Checksum::from_str("0")?;
+                let cksum_expected = self.checksums.get_checksum(&file.filename).ok_or(
+                    ArchiveError::ChecksumMissingError {
+                        filename: file.filename.clone(),
+                    },
+                )?;
                 file.finalise(cksum_expected)?;
             } else {
                 return Err(ArchiveError::UnknownPayload(format!(
@@ -169,19 +179,45 @@ fn read_text_file<'a, R: io::Read>(
     })
 }
 
-fn read_manifest<R: io::Read>(cpio_reader: &CpioReader<R>) -> Result<Manifest, ArchiveError> {
+fn read_and_parse_text_file<T, F, R: io::Read>(
+    cpio_reader: &CpioReader<R>,
+    filename_expected: &str,
+    parse_function: F,
+) -> Result<T, ArchiveError>
+where
+    F: FnOnce(&str) -> Result<T, ArchiveError>,
+{
     let mut buf = [0u8; 4096];
     let text_file = read_text_file(cpio_reader, &mut buf)?;
 
-    if text_file.filename != "manifest.json" {
+    if text_file.filename != filename_expected {
         return Err(ArchiveError::FileNotFoundError {
-            reason: format!("expected manifest file, got {}", text_file.filename),
+            reason: format!(
+                "expected file {}, got {}",
+                filename_expected, text_file.filename
+            ),
         });
     }
 
-    let manifest = manifest::parse_manifest(text_file.content)
-        .map_err(|err| ArchiveError::ManifestParseError(err))?;
-    Ok(manifest)
+    let parsed = parse_function(text_file.content)?;
+    Ok(parsed)
+}
+
+fn read_checksum_file<R: io::Read>(
+    cpio_reader: &CpioReader<R>,
+) -> Result<ChecksumLookup, ArchiveError> {
+    read_and_parse_text_file(
+        cpio_reader,
+        "checksums",
+        ChecksumLookup::parse_checksum_file,
+    )
+}
+
+fn read_manifest<R: io::Read>(cpio_reader: &CpioReader<R>) -> Result<Manifest, ArchiveError> {
+    let parse_func = |content: &str| {
+        manifest::parse_manifest(content).map_err(|err| ArchiveError::ManifestParseError(err))
+    };
+    read_and_parse_text_file(cpio_reader, "manifest.json", parse_func)
 }
 
 #[cfg(test)]
@@ -203,7 +239,7 @@ mod test {
         let path = test_path("archive/test.cpio");
 
         let input = fs::File::open(path).unwrap();
-        let archive = Archive::new(input);
+        let archive = Archive::new(input).unwrap();
 
         assert_eq!(archive.deploy().unwrap(), ());
     }
@@ -220,7 +256,7 @@ mod test {
         )
         .unwrap();
 
-        let archive = Archive::new(reader);
+        let archive = Archive::new(reader).unwrap();
         assert_eq!(archive.deploy().unwrap(), ());
     }
 }

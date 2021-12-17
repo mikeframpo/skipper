@@ -13,7 +13,7 @@ fn main() {
     println!("Starting deployment from file: {}", source);
     let source = File::open(PathBuf::from(source)).unwrap();
 
-    let archive = Archive::new(source);
+    let archive = Archive::new(source).unwrap();
     archive.deploy().unwrap();
     println!("Deployment complete");
 }
