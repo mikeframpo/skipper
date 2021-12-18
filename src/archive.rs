@@ -25,10 +25,7 @@ pub struct Archive<'a, R: io::Read> {
 #[derive(Error, Debug)]
 pub enum ArchiveError {
     #[error("archive: io error")]
-    IOError {
-        #[from]
-        source: io::Error,
-    },
+    IOError { source: io::Error, context: String },
 
     #[error("archive: parse error")]
     ParseError(Box<dyn error::Error>),
@@ -168,7 +165,10 @@ fn read_text_file<'a, R: io::Read>(
     }
 
     // TODO: need to make read_to_end work properly
-    let count = file.read(buf)?;
+    let count = file.read(buf).map_err(|err| ArchiveError::IOError {
+        source: err,
+        context: format!("read err in archive file: {}", file.filename),
+    })?;
     let data = std::str::from_utf8(&buf[..count])?;
     trace!("text file data: {}", data);
 

@@ -43,13 +43,13 @@ impl Payload for ImagePayload {
     fn write_begin(&mut self) -> Result<(), ArchiveError> {
         // open the destination file
         // TODO: I think this will fail for a block device
-        self.dest_file = Some(File::create(&self.dest)?);
-        debug!(
-            "opened destination: {}",
-            self.dest
-                .to_str()
-                .expect("destination file must be valid unicode")
+        self.dest_file = Some(
+            File::create(&self.dest).map_err(|err| ArchiveError::IOError {
+                source: err,
+                context: format!("image writer, opening path: {}", &self.dest.display()),
+            })?,
         );
+        debug!("opened destination: {}", self.dest.display());
         Ok(())
     }
 
@@ -62,7 +62,21 @@ impl Payload for ImagePayload {
             });
         }
 
-        self.dest_file.as_mut().unwrap().write_all(buf)?;
+        self.dest_file
+            .as_mut()
+            .unwrap()
+            .write_all(buf)
+            .map_err(|err| {
+                let pos = self.image_size - self.remaining;
+                ArchiveError::IOError {
+                    source: err,
+                    context: format!(
+                        "image writer, writing to dest: {}, pos: {}",
+                        self.dest.display(),
+                        pos
+                    ),
+                }
+            })?;
         debug!("wrote {} bytes to dest", buf.len());
 
         self.remaining -= buf.len() as u64;
@@ -74,7 +88,10 @@ impl Payload for ImagePayload {
 }
 
 fn read_block<R: io::Read>(reader: &mut R, buf: &mut [u8]) -> Result<usize, ArchiveError> {
-    let read_count = reader.read(buf)?;
+    let read_count = reader.read(buf).map_err(|err| ArchiveError::IOError {
+        source: err,
+        context: format!("image writer, reading from archive"),
+    })?;
     debug!("read {} bytes from reader", read_count);
     Ok(read_count)
 }

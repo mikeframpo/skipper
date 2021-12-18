@@ -60,9 +60,18 @@ impl<'a, R: io::Read> CpioFile<'a, R> {
 
         self.cksum.finalise();
         if self.cksum != cksum_expected {
-            return Err(ArchiveError::ChecksumMismatchError { filename: self.filename.clone() });
+            return Err(ArchiveError::ChecksumMismatchError {
+                filename: self.filename.clone(),
+            });
         }
         Ok(())
+    }
+}
+
+fn map_read_err(count: usize) -> impl FnOnce(io::Error) -> ArchiveError {
+    move |err| ArchiveError::IOError {
+        source: err,
+        context: format!("cpio reader, pos: {}", count),
     }
 }
 
@@ -82,9 +91,10 @@ impl<'a, R: io::Read> CpioReader<R> {
 
     fn read_hex_u32(reader: &mut cell::RefMut<PosReader<R>>) -> Result<u32, ArchiveError> {
         let mut buf = [0u8; 8];
-        if let Err(err) = reader.read_exact(&mut buf) {
-            return Err(ArchiveError::IOError { source: err });
-        }
+        reader
+            .read_exact(&mut buf)
+            .map_err(map_read_err(reader.count))?;
+
         let hexstr = str::from_utf8(&buf).map_err(|err| ArchiveError::ParseError(Box::new(err)))?;
         let val = u32::from_str_radix(hexstr, 16)
             .map_err(|err| ArchiveError::ParseError(Box::new(err)))?;
@@ -100,16 +110,17 @@ impl<'a, R: io::Read> CpioReader<R> {
             let trailing = (4 - (reader.count % 4)) % 4;
             //trace!("reading {} more bytes", trailing);
             let mut trailing_buf = [0u8; 4];
-            reader.read_exact(&mut trailing_buf[0..trailing as usize])?;
+            reader
+                .read_exact(&mut trailing_buf[0..trailing as usize])
+                .map_err(map_read_err(reader.count))?;
         }
 
         let mut buf = [0u8; 256];
         {
             let mut buf = &mut buf[0..MAGIC_NUMBER.len()];
-            if let Err(err) = io::Read::read_exact(&mut *reader, &mut buf) {
-                return Err(ArchiveError::IOError { source: err });
-            }
+            io::Read::read_exact(&mut *reader, &mut buf).map_err(map_read_err(reader.count))?;
             debug!("magic: {}", str::from_utf8(&buf[..buf.len()]).unwrap());
+
             if buf != MAGIC_NUMBER {
                 return Err(ArchiveError::FormatError {
                     offset: reader.count,
@@ -149,9 +160,10 @@ impl<'a, R: io::Read> CpioReader<R> {
         }
 
         let mut buf = &mut buf[0..namesize as usize];
-        if let Err(err) = reader.read_exact(&mut buf) {
-            return Err(ArchiveError::IOError { source: err });
-        }
+        reader
+            .read_exact(&mut buf)
+            .map_err(map_read_err(reader.count))?;
+
         let filename = str::from_utf8(&buf[..(buf.len() - 1)])
             .map_err(|err| ArchiveError::ParseError(Box::new(err)))?;
         debug!("filename: {}", filename);
@@ -162,7 +174,9 @@ impl<'a, R: io::Read> CpioReader<R> {
             let mut trailing_buf = [0u8; 4];
             let trailing = (4 - (bytes_read % 4)) % 4;
             //trace!("trailing: {}", trailing);
-            reader.read_exact(&mut trailing_buf[0..trailing])?;
+            reader
+                .read_exact(&mut trailing_buf[0..trailing])
+                .map_err(map_read_err(reader.count))?;
         }
 
         if filename == TRAILER {
